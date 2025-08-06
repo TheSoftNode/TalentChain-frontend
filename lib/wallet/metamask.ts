@@ -7,7 +7,7 @@ import { APP_CONFIG, WALLET_CONFIG, getNetworkConfig } from '../config/networks'
 
 declare global {
   interface Window {
-    ethereum?: any;
+    ethereum?: Record<string, unknown>;
   }
 }
 

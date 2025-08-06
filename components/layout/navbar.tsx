@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import Link from "next/link";
 import { 
   Menu, 
   X, 
@@ -122,14 +123,34 @@ export function Navbar() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     ) : (
-                      <Button 
-                        variant="ghost" 
-                        size="sm"
-                        className="text-slate-700 dark:text-slate-300 hover:text-hedera-600 dark:hover:text-hedera-400 font-medium transition-all duration-200 hover:bg-hedera-50/50 dark:hover:bg-hedera-900/20"
-                      >
-                        {item.name}
-                        {item.external && <ExternalLink className="w-3 h-3 ml-1" />}
-                      </Button>
+                      // Fixed: Wrap Button in Link or use Link directly for navigation
+                      item.external ? (
+                        <a 
+                          href={item.href}
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center"
+                        >
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            className="text-slate-700 dark:text-slate-300 hover:text-hedera-600 dark:hover:text-hedera-400 font-medium transition-all duration-200 hover:bg-hedera-50/50 dark:hover:bg-hedera-900/20"
+                          >
+                            {item.name}
+                            <ExternalLink className="w-3 h-3 ml-1" />
+                          </Button>
+                        </a>
+                      ) : (
+                        <Link href={item.href || "/"}>
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            className="text-slate-700 dark:text-slate-300 hover:text-hedera-600 dark:hover:text-hedera-400 font-medium transition-all duration-200 hover:bg-hedera-50/50 dark:hover:bg-hedera-900/20"
+                          >
+                            {item.name}
+                          </Button>
+                        </Link>
+                      )
                     )}
                   </div>
                 ))}

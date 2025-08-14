@@ -202,19 +202,40 @@ export class WalletConnector {
 
             console.log('🔗 Connecting to MetaMask...');
 
-            // Request accounts
-            const accounts = await ethereum.request({ method: 'eth_requestAccounts' }) as string[];
-            const account = accounts[0];
-
-            if (!account) {
-                throw new Error('No accounts found');
+            // Check if MetaMask is unlocked first
+            try {
+                const accounts = await ethereum.request({ method: 'eth_accounts' }) as string[] | null | undefined;
+                if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
+                    throw new Error('MetaMask is locked. Please unlock MetaMask and try again.');
+                }
+            } catch (unlockError: any) {
+                if (unlockError.code === 4001) {
+                    throw new Error('MetaMask connection was rejected. Please approve the connection request.');
+                } else if (unlockError.message?.includes('locked')) {
+                    throw new Error('MetaMask is locked. Please unlock MetaMask and try again.');
+                }
+                // Continue with the connection process
             }
 
+            // Request account access with timeout
+            const connectionPromise = ethereum.request({ method: 'eth_requestAccounts' });
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('MetaMask connection timeout. Please try again.')), 30000)
+            );
+
+            const accounts = await Promise.race([connectionPromise, timeoutPromise]) as string[] | null | undefined;
+
+            if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
+                throw new Error('No accounts found. Please make sure you have accounts in MetaMask.');
+            }
+
+            const account = accounts[0];
+
             // Check if we're on the correct network
-            const chainId = await ethereum.request({ method: 'eth_chainId' }) as string;
+            const chainId = await ethereum.request({ method: 'eth_chainId' }) as string | null | undefined;
             const expectedChainId = process.env.NEXT_PUBLIC_METAMASK_CHAIN_ID || '296';
 
-            if (chainId !== `0x${parseInt(expectedChainId).toString(16)}`) {
+            if (!chainId || chainId !== `0x${parseInt(expectedChainId).toString(16)}`) {
                 // Request network switch
                 try {
                     await ethereum.request({
@@ -270,6 +291,26 @@ export class WalletConnector {
             return connection;
         } catch (error) {
             console.error('MetaMask connection error:', error);
+
+            // Provide better error messages for common issues
+            if (error instanceof Error) {
+                if (error.message.includes('locked')) {
+                    throw new Error('MetaMask is locked. Please unlock MetaMask and try again.');
+                } else if (error.message.includes('rejected')) {
+                    throw new Error('MetaMask connection was rejected. Please approve the connection request.');
+                } else if (error.message.includes('timeout')) {
+                    throw new Error('MetaMask connection timeout. Please try again.');
+                } else if (error.message.includes('No accounts found')) {
+                    throw new Error('No accounts found in MetaMask. Please add an account and try again.');
+                }
+            }
+
+            // If it's a timeout or connection issue, try to reset state
+            if (error instanceof Error && error.message.includes('timeout')) {
+                console.log('Connection timeout detected, resetting state...');
+                this.resetConnectionState();
+            }
+
             throw error;
         }
     }
@@ -461,12 +502,37 @@ export class WalletConnector {
                 console.log('Disconnecting HashPack via WalletConnect...');
             } else if (this.connection.type === WalletType.WALLETCONNECT && this.walletConnectProvider) {
                 await this.walletConnectProvider.disconnect();
+            } else if (this.connection.type === WalletType.METAMASK) {
+                // MetaMask doesn't have a disconnect method, but we can clean up our state
+                console.log('Disconnecting MetaMask...');
+                // Remove event listeners
+                if (this.ethereum) {
+                    this.ethereum.removeAllListeners();
+                }
             }
 
+            // Clear connection state
             this.connection = null;
             this.clearSavedConnection();
+
+            // Reset wallet-specific providers
+            if (connection.type === WalletType.METAMASK) {
+                this.walletConnectProvider = null;
+            }
+
             this.emit('disconnected', connection);
         }
+    }
+
+    // Force reset connection state (useful for recovery)
+    resetConnectionState() {
+        console.log('🔄 Resetting connection state...');
+        this.connection = null;
+        this.walletConnectProvider = null;
+        this.hashPackConnector = null;
+        this.hederaWalletConnectProvider = null;
+        this.clearSavedConnection();
+        this.emit('disconnected', null);
     }
 
     getConnection(): WalletConnection | null {
@@ -475,6 +541,28 @@ export class WalletConnector {
 
     isConnected(): boolean {
         return this.connection !== null;
+    }
+
+    async checkConnectionHealth(): Promise<boolean> {
+        if (!this.connection) {
+            return false;
+        }
+
+        try {
+            if (this.connection.type === WalletType.METAMASK && this.connection.provider) {
+                // Test if MetaMask is still responsive
+                const balance = await this.connection.provider.getBalance(this.connection.address);
+                return true;
+            } else if (this.connection.type === WalletType.WALLETCONNECT && this.walletConnectProvider) {
+                // Test WalletConnect connection
+                const accounts = await this.walletConnectProvider.request({ method: 'eth_accounts' });
+                return accounts && accounts.length > 0;
+            }
+            return true;
+        } catch (error) {
+            console.warn('Connection health check failed:', error);
+            return false;
+        }
     }
 
     async getBalance(): Promise<string> {
@@ -600,19 +688,58 @@ export class WalletConnector {
 
     static isMetaMaskInstalled(): boolean {
         if (typeof window === 'undefined') return false;
-        return !!window.ethereum?.isMetaMask;
+
+        // Check if MetaMask extension exists
+        const hasMetaMask = !!window.ethereum?.isMetaMask;
+        console.log('MetaMask extension detected:', hasMetaMask);
+
+        return hasMetaMask;
     }
 
-    static getAvailableWallets(): WalletType[] {
+    static async isMetaMaskAvailable(): Promise<boolean> {
+        try {
+            // First check if MetaMask extension is installed
+            if (!this.isMetaMaskInstalled()) {
+                console.log('MetaMask extension not found');
+                return false;
+            }
+
+            const ethereum = window.ethereum as any;
+
+            // Check if MetaMask is unlocked and responsive
+            // We'll use a non-intrusive method that doesn't require user permission
+            try {
+                // Check if MetaMask is responsive by checking if it's available
+                // This doesn't require user permission
+                if (ethereum.isMetaMask && typeof ethereum.request === 'function') {
+                    console.log('MetaMask is installed and responsive');
+                    return true;
+                }
+
+                console.log('MetaMask is installed but not responsive');
+                return false;
+            } catch (error) {
+                console.warn('MetaMask responsiveness check failed:', error);
+                // Even if the responsiveness check fails, if we detected the extension, 
+                // it's likely available (user might just need to unlock it)
+                return true;
+            }
+        } catch (error) {
+            console.warn('MetaMask availability check failed:', error);
+            return false;
+        }
+    }
+
+    static async getAvailableWallets(): Promise<WalletType[]> {
         const wallets: WalletType[] = [];
 
         console.log('Checking HashPack installation...');
         const hashpackInstalled = WalletConnector.isHashPackInstalled();
         console.log('HashPack installed:', hashpackInstalled);
 
-        console.log('Checking MetaMask installation...');
-        const metamaskInstalled = WalletConnector.isMetaMaskInstalled();
-        console.log('MetaMask installed:', metamaskInstalled);
+        console.log('Checking MetaMask availability...');
+        const metamaskAvailable = await WalletConnector.isMetaMaskAvailable();
+        console.log('MetaMask available:', metamaskAvailable);
 
         // Check HashPack extension
         if (hashpackInstalled) {
@@ -620,7 +747,7 @@ export class WalletConnector {
         }
 
         // Check MetaMask
-        if (metamaskInstalled) {
+        if (metamaskAvailable) {
             wallets.push(WalletType.METAMASK);
         }
 
@@ -649,11 +776,60 @@ export class WalletConnector {
             if (saved) {
                 try {
                     this.connection = JSON.parse(saved);
+                    
+                    // If we have a saved connection, try to restore it
+                    if (this.connection) {
+                        // For MetaMask, check if the account is still accessible
+                        if (this.connection.type === WalletType.METAMASK) {
+                            this.restoreMetaMaskConnection();
+                        } else if (this.connection.type === WalletType.HASHPACK) {
+                            this.restoreHashPackConnection();
+                        }
+                        // For WalletConnect, the connection might need to be re-established
+                    }
                 } catch (error) {
                     console.error('Error loading saved connection:', error);
                     this.clearSavedConnection();
                 }
             }
+        }
+    }
+
+    private async restoreMetaMaskConnection() {
+        try {
+            const ethereum = window.ethereum as any;
+            if (ethereum && ethereum.isMetaMask) {
+                // Check if the saved account is still accessible
+                const accounts = await ethereum.request({ method: 'eth_accounts' });
+                if (accounts && accounts.length > 0 && accounts[0].toLowerCase() === this.connection?.address.toLowerCase()) {
+                    // Account is still accessible, restore the connection
+                    console.log('Restoring MetaMask connection...');
+                    this.emit('connected', this.connection);
+                } else {
+                    console.log('Saved MetaMask account no longer accessible, clearing connection');
+                    this.clearSavedConnection();
+                }
+            }
+        } catch (error) {
+            console.error('Error restoring MetaMask connection:', error);
+            this.clearSavedConnection();
+        }
+    }
+
+    private async restoreHashPackConnection() {
+        try {
+            // For HashPack, we might need to check if the extension is still available
+            // and if the account is still accessible
+            if (WalletConnector.isHashPackInstalled()) {
+                console.log('Restoring HashPack connection...');
+                this.emit('connected', this.connection);
+            } else {
+                console.log('HashPack extension not available, clearing connection');
+                this.clearSavedConnection();
+            }
+        } catch (error) {
+            console.error('Error restoring HashPack connection:', error);
+            this.clearSavedConnection();
         }
     }
 

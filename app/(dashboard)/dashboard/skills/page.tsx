@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Trophy,
-  Plus,
   Search,
   Filter,
   ArrowUpRight,
@@ -14,21 +13,20 @@ import {
   Award,
   BookOpen,
   Target,
-  TrendingUp
+  TrendingUp,
+  Plus
 } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { useAuth } from "@/hooks/useAuth";
+import { SkillTokenInfo } from "@/lib/types/wallet";
+import { CreateSkillTokenDialog } from "@/components/skills/create-skill-token-dialog";
+import { UpdateSkillTokenDialog } from "@/components/skills/update-skill-token-dialog";
+import { ViewSkillTokenDialog } from "@/components/skills/view-skill-token-dialog";
+import { WalletConnectionPrompt } from "@/components/dashboard/wallet-connection-prompt";
 import {
   Select,
   SelectContent,
@@ -36,10 +34,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { useAuth } from "@/hooks/useAuth";
-import { SkillTokenInfo } from "@/lib/types/wallet";
 
 // Mock data - will be replaced with real API calls
 const mockSkillTokens: SkillTokenInfo[] = [
@@ -105,23 +99,22 @@ export default function SkillsPage() {
   const [skills, setSkills] = useState<SkillTokenInfo[]>(mockSkillTokens);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-
-  // Form state for creating new skill
-  const [newSkill, setNewSkill] = useState({
-    category: "",
-    customCategory: "",
-    initialLevel: 1,
-    evidence: "",
-    description: ""
-  });
 
   useEffect(() => {
     if (isConnected && user) {
       fetchUserSkills();
     }
   }, [isConnected, user]);
+
+  if (!isConnected) {
+    return (
+      <WalletConnectionPrompt
+        title="Connect to Manage Skills"
+        description="Connect your Hedera wallet to create and manage your skill tokens."
+      />
+    );
+  }
 
   const fetchUserSkills = async () => {
     setIsLoading(true);
@@ -131,50 +124,6 @@ export default function SkillsPage() {
       // setSkills(userSkills);
     } catch (error) {
       console.error('Failed to fetch skills:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleCreateSkill = async () => {
-    setIsLoading(true);
-    try {
-      const skillData = {
-        category: newSkill.category === "custom" ? newSkill.customCategory : newSkill.category,
-        level: newSkill.initialLevel,
-        uri: `ipfs://skill-${Date.now()}`, // Temporary URI
-        evidence: newSkill.evidence,
-        description: newSkill.description
-      };
-
-      // TODO: Implement skill creation via smart contract
-      // const result = await createSkillToken(skillData);
-
-      console.log('Creating skill token:', skillData);
-
-      // Mock success
-      const newSkillToken: SkillTokenInfo = {
-        tokenId: skills.length + 1,
-        category: skillData.category,
-        level: skillData.level,
-        uri: skillData.uri,
-        owner: user?.accountId || ""
-      };
-
-      setSkills([...skills, newSkillToken]);
-      setIsCreateDialogOpen(false);
-
-      // Reset form
-      setNewSkill({
-        category: "",
-        customCategory: "",
-        initialLevel: 1,
-        evidence: "",
-        description: ""
-      });
-
-    } catch (error) {
-      console.error('Failed to create skill:', error);
     } finally {
       setIsLoading(false);
     }
@@ -223,99 +172,7 @@ export default function SkillsPage() {
                 </p>
               </div>
 
-              <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button className="bg-hedera-600 hover:bg-hedera-700">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Create Skill Token
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-md">
-                  <DialogHeader>
-                    <DialogTitle>Create New Skill Token</DialogTitle>
-                    <DialogDescription>
-                      Mint a new soulbound token representing your skill
-                    </DialogDescription>
-                  </DialogHeader>
-
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="category">Skill Category</Label>
-                      <Select value={newSkill.category} onValueChange={(value) => setNewSkill({ ...newSkill, category: value })}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a skill category" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {skillCategories.map((category) => (
-                            <SelectItem key={category} value={category}>
-                              {category}
-                            </SelectItem>
-                          ))}
-                          <SelectItem value="custom">Custom Category</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {newSkill.category === "custom" && (
-                      <div className="space-y-2">
-                        <Label htmlFor="customCategory">Custom Category</Label>
-                        <Input
-                          id="customCategory"
-                          value={newSkill.customCategory}
-                          onChange={(e) => setNewSkill({ ...newSkill, customCategory: e.target.value })}
-                          placeholder="Enter custom skill category"
-                        />
-                      </div>
-                    )}
-
-                    <div className="space-y-2">
-                      <Label htmlFor="level">Initial Level (1-10)</Label>
-                      <Select value={newSkill.initialLevel.toString()} onValueChange={(value) => setNewSkill({ ...newSkill, initialLevel: parseInt(value) })}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Array.from({ length: 10 }, (_, i) => i + 1).map((level) => (
-                            <SelectItem key={level} value={level.toString()}>
-                              Level {level} - {level <= 3 ? 'Beginner' : level <= 6 ? 'Intermediate' : level <= 8 ? 'Advanced' : 'Expert'}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="evidence">Evidence/Portfolio Links</Label>
-                      <Textarea
-                        id="evidence"
-                        value={newSkill.evidence}
-                        onChange={(e) => setNewSkill({ ...newSkill, evidence: e.target.value })}
-                        placeholder="Provide links to your work, certifications, or portfolio"
-                        rows={3}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="description">Description</Label>
-                      <Textarea
-                        id="description"
-                        value={newSkill.description}
-                        onChange={(e) => setNewSkill({ ...newSkill, description: e.target.value })}
-                        placeholder="Describe your experience and expertise in this skill"
-                        rows={3}
-                      />
-                    </div>
-
-                    <Button
-                      onClick={handleCreateSkill}
-                      disabled={!newSkill.category || isLoading}
-                      className="w-full bg-hedera-600 hover:bg-hedera-700"
-                    >
-                      {isLoading ? 'Creating...' : 'Create Skill Token'}
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
+              <CreateSkillTokenDialog />
             </div>
           </motion.div>
         </div>
@@ -454,14 +311,15 @@ export default function SkillsPage() {
                     </div>
 
                     <div className="flex items-center space-x-2 mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
-                      <Button variant="ghost" size="sm" className="flex-1">
-                        <Edit3 className="w-4 h-4 mr-2" />
-                        Update
-                      </Button>
-                      <Button variant="ghost" size="sm" className="flex-1">
-                        <ExternalLink className="w-4 h-4 mr-2" />
-                        View
-                      </Button>
+                      <UpdateSkillTokenDialog 
+                        skill={skill}
+                        onSkillUpdated={(updatedSkill) => {
+                          setSkills(prev => prev.map(s => 
+                            s.tokenId === updatedSkill.tokenId ? updatedSkill : s
+                          ));
+                        }}
+                      />
+                      <ViewSkillTokenDialog skill={skill} />
                     </div>
                   </CardContent>
                 </Card>
@@ -483,13 +341,14 @@ export default function SkillsPage() {
               }
             </p>
             {!searchTerm && selectedCategory === "all" && (
-              <Button
-                onClick={() => setIsCreateDialogOpen(true)}
-                className="bg-hedera-600 hover:bg-hedera-700"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Create Your First Skill
-              </Button>
+              <CreateSkillTokenDialog
+                triggerButton={
+                  <Button className="bg-hedera-600 hover:bg-hedera-700">
+                    <Plus className="w-4 h-4 mr-2" />
+                    Create Your First Skill
+                  </Button>
+                }
+              />
             )}
           </div>
         )}
